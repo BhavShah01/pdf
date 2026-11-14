@@ -1,0 +1,492 @@
+---
+title: "UCL Data Visualisation (BENV0183)"
+author: "Bhavesh Shah"
+output: html_notebook
+---
+
+| Term | Meaning |
+|-------------------|-----------------------------------------------------|
+| **Temp** | Air temperature in °C. |
+| **RH** | Relative humidity in %. How "full" the air is with water vapour *at that temperature*. |
+| **AH** | Absolute humidity in g/m³. The actual amount of water vapour in the air. |
+| **Dew point** | The temperature at which the air would become saturated and condensation would start. |
+
+
+# R
+
+Load some packages
+
+A package only needs to be **installed once**, but must be **loaded every session** with `library()`.
+
+-   tidyverse: a family of useful packages for data analysis and plotting <https://tidyverse.org/>
+-   ConSciR: functions for conservation science data <https://bhavshah01.github.io/ConSciR/index.html>
+
+
+```{r eval=FALSE}
+# Only run this ONCE if you get an error saying a package is "not found".
+# (eval=FALSE means this chunk is skipped when you run the whole notebook.)
+install.packages("tidyverse")
+install.packages("readxl")
+install.packages("curl")
+install.packages("openair")
+install.packages("remotes")
+remotes::install_github("BhavShah01/ConSciR")
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse); library(ggplot2)
+library(ConSciR) 
+```
+
+# Data
+
+## Load some data
+
+Download an Excel file from GitHub, save a copy on our computer, then read it into R.
+
+`testdata <- read_excel("path/to/your_file.xlsx")`. Your data will need columns called `Date`, `Temp`, `RH` and `Sensor` to work with the ConSciR functions below.
+
+```{r message=FALSE, warning=FALSE}
+library(readxl)   # lets R read Excel files
+
+# 1. The web address of the file
+url <- "https://github.com/BhavShah01/ConSciR/raw/refs/heads/master/data-raw/mydata.xlsx"
+
+# 2. What we want to call the file on our computer
+destfile <- "mydata.xlsx"
+
+# 3. Download it
+curl::curl_download(url, destfile)
+
+# 4. Read it into R and store it in an object called `testdata`
+testdata <- read_excel(destfile)
+```
+
+
+#### Look at supplied dataset
+
+**Always look at your data before you plot it.** These are quick ways of doing that.
+
+```{r message=FALSE, warning=FALSE}
+# The first 6 rows
+head(testdata)
+```
+
+```{r message=FALSE, warning=FALSE}
+# glimpse() shows every column, its type, and the first few values.
+# <dttm> = date-time, <dbl> = number, <chr> = text
+glimpse(testdata)
+```
+
+```{r message=FALSE, warning=FALSE}
+# How many rows? How many readings per sensor? What dates does it cover?
+nrow(testdata)
+
+testdata |>
+  group_by(Sensor) |>
+  summarise(
+    Readings = n(),
+    Start = min(Date),
+    End = max(Date)
+  )
+```
+
+### Check for missing data
+
+Real sensors drop out, batteries fail. Missing values (`NA`) can quietly affect your results, so always check.
+
+```{r message=FALSE, warning=FALSE}
+# Count the number of NA (missing) values in each column
+testdata |>
+  summarise(across(everything(), ~ sum(is.na(.x))))
+```
+
+
+
+# Graphs
+
+## Basic graph
+
+`graph_TRH()` is a ConSciR function that makes a quick time series of temperature and RH in one go.
+
+```{r message=FALSE, warning=FALSE}
+graph_TRH(testdata)
+```
+
+**Now the same idea built by hand with ggplot2.** Read it from top to bottom, each `+` adds a new layer:
+
+```{r message=FALSE, warning=FALSE}
+testdata |>                                  # start with the data
+  ggplot() +                                 # create an empty plot
+  geom_line(aes(Date, Temp), col = "red") +  # add a red line: x = Date, y = Temp
+  geom_line(aes(Date, RH), col = "blue") +   # add a blue line: x = Date, y = RH
+  labs(title = "Time Series") +              # add a title
+  facet_grid(~Sensor) +                      # one panel per Sensor
+  theme_classic()                            # a clean look
+```
+
+## Apply a theme
+
+A **theme** changes the look of the graph (background, gridlines, fonts) but not the data. Try replacing `theme_classic()` with `theme_minimal()`, `theme_bw()`, `theme_light()` or `theme_dark()`.
+
+```{r message=FALSE, warning=FALSE}
+graph_TRH(testdata) + 
+  theme_classic()
+```
+
+## Distributions: how are values spread out?
+
+A **density chart** is a smoothed histogram. The higher the curve, the more readings at that value.
+
+```{r message=FALSE, warning=FALSE}
+testdata |>
+  ggplot() + 
+  geom_density(aes(Temp), fill = "Red", alpha = 0.5) +
+  geom_density(aes(RH), fill = "Blue", alpha = 0.5) + 
+  labs(
+    x = "Temperature and Humidity", 
+    y = "Density", 
+    title = "Density Chart") +
+  facet_grid(Sensor~.) +
+  theme_minimal()
+```
+
+### Extra: histogram, one variable at a time
+
+Plotting Temp and RH on a single x-axis (above) is convenient but a bit unusual. Separate plots are usually clearer.
+
+```{r message=FALSE, warning=FALSE}
+testdata |>
+  ggplot(aes(x = RH, fill = Sensor)) +
+  geom_histogram(binwidth = 2, colour = "white") +   # each bar covers 2% RH
+  facet_wrap(~Sensor) +
+  labs(title = "Histogram of RH", x = "RH (%)", y = "Number of readings") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+### Extra: boxplots to compare sensors
+
+A **boxplot** summarises a distribution: the thick line is the median, the box is the middle 50% of readings, the "whiskers" show the typical range and any dots are unusual values (outliers).
+
+```{r message=FALSE, warning=FALSE}
+testdata |>
+  pivot_longer(c(Temp, RH), names_to = "Variable", values_to = "Value") |>  # stack Temp and RH into one column
+  ggplot(aes(x = Sensor, y = Value, fill = Variable)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~Variable, scales = "free_y") +      # separate y-axis for each variable
+  labs(title = "Temperature and RH by sensor", x = NULL, y = NULL) +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+> **Think about it:** Which sensor has the most stable conditions? Which has the biggest range?
+
+## Relationship between Temp and RH
+
+Does RH change when temperature changes? A **scatter plot** shows one point per reading.
+
+```{r message=FALSE, warning=FALSE}
+testdata |>
+  ggplot(aes(x = Temp, y = RH)) +
+  geom_point(alpha = 0.15) +                              # small transparent points so overlaps are visible
+  geom_smooth(method = "lm", colour = "red") +            # add a straight "line of best fit"
+  facet_wrap(~Sensor) +
+  labs(title = "Temperature vs RH", x = "Temp (°C)", y = "RH (%)") +
+  theme_bw()
+```
+
+```{r message=FALSE, warning=FALSE}
+# A single number summarising the relationship: the correlation coefficient.
+#  +1 = perfect positive relationship, 0 = none, -1 = perfect negative relationship
+testdata |>
+  group_by(Sensor) |>
+  summarise(Correlation_Temp_RH = round(cor(Temp, RH, use = "complete.obs"), 2))
+```
+
+> **Remember:** correlation does not mean causation. RH is partly *defined* by temperature (warm air can hold more water), so a strong negative correlation is physically expected.
+
+## Bivariate chart
+
+This is a ConSciR chart. Each hexagon/cell shows a third variable (here absolute humidity, `calcAH`) for each combination of Temp (x) and RH (y). The box shows a target comfort or conservation range.
+
+Type `?graph_TRHbivariate` in the Console to see all the settings.
+
+```{r message=FALSE, warning=FALSE}
+testdata |>
+  add_time_vars() |>              # adds season, month, hour ... columns (explained in the Dates section below)
+  graph_TRHbivariate(
+    z_func = "calcAH",            # which variable to colour by
+    LowT = 16, HighT = 25,        # target temperature range (°C)
+    LowRH = 40, HighRH = 60,      # target RH range (%)
+    Temp_range = c(0, 40),        # x-axis limits
+    RH_range = c(0, 100),         # y-axis limits
+    alpha = 0.7,
+    limit_caption = "Bivariate Chart"
+  ) + 
+  facet_grid(Sensor ~ season)     # rows = Sensor, columns = season
+```
+
+
+## Psychrometric chart
+
+A **psychrometric chart** is the standard engineers' chart for air. Temperature runs along the bottom, moisture content up the side, and curved lines show RH. Each point is one reading, coloured here by month.
+
+Type `?graph_psychrometric` in the Console for the settings.
+
+```{r message=FALSE, warning=FALSE}
+testdata |> 
+  mutate(
+    month = lubridate::month(Date, label = TRUE)   # make a column with the month name (Jan, Feb ...)
+    )  |>
+  graph_psychrometric(
+    y_func = "calcAH",     # y-axis = absolute humidity
+    data_col = "month") +  # colour the points by month
+  facet_grid(~Sensor) + 
+  theme_bw()
+```
+
+# Dates
+
+Dates are the most useful (and most annoying) part of environmental data. The `lubridate` package makes them easier.
+
+```{r message=FALSE, warning=FALSE}
+library(lubridate)
+
+# Pull the month out of the Date and add it as a new column
+# NOTE: this only *displays* the result. We have not saved it, so `testdata` is unchanged.
+testdata |>
+  mutate(month = lubridate::month(Date, label = TRUE)) 
+```
+
+## Adding lots of date columns at once
+
+`add_time_vars()` (from ConSciR) adds many handy columns in one step.
+
+```{r message=FALSE, warning=FALSE}
+# We SAVE this one into a new object so we can reuse it below
+testdata_time <- testdata |> 
+  add_time_vars()
+
+# See the new columns that were added
+glimpse(testdata_time)
+```
+
+Useful new columns include `season`, `seasonyear`, `month`, `weekday`, `hour` and `day`. Use them to group and compare your data.
+
+## Summary table by season
+
+`group_by()` splits the data into groups, `summarise()` then calculates one row of results per group.
+
+```{r message=FALSE, warning=FALSE}
+testdata |>
+  add_time_vars() |>
+  group_by(Sensor, seasonyear) |>                  # one group for every Sensor + season/year
+  summarise(
+    TempAvg = mean(Temp, na.rm = TRUE),            # na.rm = TRUE ignores missing values
+    RHAvg = mean(RH, na.rm = TRUE)
+  )
+```
+
+### Extra: a fuller summary table
+
+Averages alone can hide a lot. Min, max and standard deviation (how much values vary) give a better picture.
+
+```{r message=FALSE, warning=FALSE}
+testdata_time |>
+  group_by(Sensor, season) |>
+  summarise(
+    Readings = n(),
+    Temp_mean = mean(Temp, na.rm = TRUE),
+    Temp_min  = min(Temp, na.rm = TRUE),
+    Temp_max  = max(Temp, na.rm = TRUE),
+    Temp_sd   = sd(Temp, na.rm = TRUE),
+    RH_mean   = mean(RH, na.rm = TRUE),
+    RH_min    = min(RH, na.rm = TRUE),
+    RH_max    = max(RH, na.rm = TRUE),
+    RH_sd     = sd(RH, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(across(where(is.numeric), ~ round(.x, 1)))   # round all numbers to 1 decimal place
+```
+
+## Daily averages
+
+Raw sensor data can be very busy. Averaging by day reveals the longer-term pattern.
+
+```{r message=FALSE, warning=FALSE}
+daily <- testdata_time |>
+  group_by(Sensor, day) |>
+  summarise(
+    Temp = mean(Temp, na.rm = TRUE),
+    RH = mean(RH, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+daily |>
+  pivot_longer(c(Temp, RH), names_to = "Variable", values_to = "Value") |>
+  ggplot(aes(x = day, y = Value, colour = Sensor)) +
+  geom_line() +
+  facet_grid(Variable ~ ., scales = "free_y") +
+  labs(title = "Daily average Temp and RH", x = NULL, y = NULL) +
+  theme_minimal()
+```
+
+## Monthly patterns
+
+```{r message=FALSE, warning=FALSE}
+testdata_time |>
+  ggplot(aes(x = month, y = RH, fill = Sensor)) +
+  geom_boxplot(outlier.size = 0.5) +
+  labs(title = "RH by month", x = "Month", y = "RH (%)") +
+  theme_bw()
+```
+
+## Time of day patterns
+
+Is there a daily cycle (e.g. heating on in the morning, visitors in the afternoon)? A **heatmap** of hour of day against month can show this.
+
+```{r message=FALSE, warning=FALSE}
+testdata_time |>
+  group_by(Sensor, month, hour) |>
+  summarise(Temp = mean(Temp, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = hour, y = month, fill = Temp)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "magma") +       # a colour-blind friendly colour scale
+  facet_wrap(~Sensor) +
+  labs(title = "Average temperature by hour and month",
+       x = "Hour of day", y = NULL, fill = "Temp (°C)") +
+  theme_minimal()
+```
+
+
+```{r message=FALSE, warning=FALSE}
+testdata_time |>
+  group_by(Sensor, month, hour) |>
+  summarise(RH = mean(RH, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = hour, y = month, fill = RH)) +
+  geom_tile() +
+  scale_fill_viridis_c() +       # a colour-blind friendly colour scale
+  facet_wrap(~Sensor) +
+  labs(title = "Average humidity by hour and month",
+       x = "Hour of day", y = NULL, fill = "Humidity (%RH)") +
+  theme_minimal()
+```
+
+
+```{r message=FALSE, warning=FALSE}
+# Average daily cycle for each season, shown as a line
+testdata_time |>
+  group_by(Sensor, season, hour) |>
+  summarise(RH = mean(RH, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = hour, y = RH, colour = season)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~Sensor) +
+  labs(title = "Average daily RH cycle", x = "Hour of day", y = "RH (%)", colour = "Season") +
+  theme_bw()
+```
+
+# Is the environment within target?
+
+Conservation guidelines often set a target range for conditions. Here we count how much of the time each sensor was inside the range used in the bivariate chart earlier (16-25 °C and 40-60 % RH). **Change the numbers to test other guidelines.**
+
+```{r message=FALSE, warning=FALSE}
+# Define the target range once, so it is easy to change
+low_T <- 16;  high_T <- 25
+low_RH <- 40; high_RH <- 60
+
+in_range <- testdata |>
+  mutate(
+    Temp_ok = Temp >= low_T & Temp <= high_T,    # TRUE if temp is within range
+    RH_ok   = RH >= low_RH & RH <= high_RH,      # TRUE if RH is within range
+    Both_ok = Temp_ok & RH_ok                    # TRUE only if both are
+  )
+
+# The mean of TRUE/FALSE values is the proportion of TRUE, so x 100 gives a percentage
+in_range |>
+  group_by(Sensor) |>
+  summarise(
+    `% time Temp in range` = round(mean(Temp_ok, na.rm = TRUE) * 100, 1),
+    `% time RH in range`   = round(mean(RH_ok, na.rm = TRUE) * 100, 1),
+    `% time both in range` = round(mean(Both_ok, na.rm = TRUE) * 100, 1)
+  )
+```
+
+```{r message=FALSE, warning=FALSE}
+# The same information as a bar chart
+in_range |>
+  group_by(Sensor) |>
+  summarise(
+    Temperature = mean(Temp_ok, na.rm = TRUE) * 100,
+    RH = mean(RH_ok, na.rm = TRUE) * 100,
+    Both = mean(Both_ok, na.rm = TRUE) * 100
+  ) |>
+  pivot_longer(-Sensor, names_to = "Target", values_to = "Percent") |>
+  ggplot(aes(x = Sensor, y = Percent, fill = Target)) +
+  geom_col(position = "dodge") +          # bars side by side
+  labs(title = "Time within target range", x = NULL, y = "% of readings") +
+  theme_minimal()
+```
+
+# Calculating new variables from Temp and RH
+
+ConSciR can calculate other useful properties from Temp and RH. `add_humidity_calcs()` adds several new columns at once (dew point `DP`, absolute humidity `AH`, mixing ratio `MR` and more).
+
+```{r message=FALSE, warning=FALSE}
+testdata_calcs <- testdata |>
+  add_humidity_calcs()
+
+# Compare Temp and RH with the new columns
+testdata_calcs |>
+  select(Date, Sensor, Temp, RH, DP, AH) |>
+  head()
+```
+
+```{r message=FALSE, warning=FALSE}
+# Plot temperature and dew point together.
+# When the dew point gets close to the temperature, condensation is likely.
+testdata_calcs |>
+  pivot_longer(c(Temp, DP), names_to = "Variable", values_to = "Value") |>
+  ggplot(aes(x = Date, y = Value, colour = Variable)) +
+  geom_line(alpha = 0.8) +
+  facet_wrap(~Sensor, ncol = 1) +
+  labs(title = "Temperature and dew point", y = "°C", colour = NULL) +
+  theme_minimal()
+```
+
+> **Think about it:** RH can swing up and down every day just because the temperature changes, even when the amount of water in the air has barely moved. Compare the plot of `RH` with the plot of `AH` (absolute humidity) to see this for yourself.
+
+```{r message=FALSE, warning=FALSE}
+testdata_calcs |>
+  pivot_longer(c(RH, AH), names_to = "Variable", values_to = "Value") |>
+  ggplot(aes(x = Date, y = Value, colour = Sensor)) +
+  geom_line() +
+  facet_grid(Variable ~ ., scales = "free_y") +
+  labs(title = "RH vs absolute humidity", x = NULL, y = NULL) +
+  theme_minimal()
+```
+
+## Mould risk
+
+`add_conservation_calcs()` adds conservation-focused columns, including a simple mould risk flag. Run `?add_conservation_calcs` to see what each column means.
+
+```{r message=FALSE, warning=FALSE}
+testdata_mould <- testdata |>
+  add_conservation_calcs()
+
+# What share of readings were flagged as a mould risk, for each sensor?
+testdata_mould |>
+  count(Sensor, Mould_risk) |>                   # count rows for each combination
+  group_by(Sensor) |>
+  mutate(Percent = round(n / sum(n) * 100, 1))   # turn counts into percentages
+```
+
+
+# Saving your work
+
+```{r eval=FALSE}
+# Save the most recent ggplot to a file (changing the name and size as needed)
+ggsave("my_graph.png", width = 8, height = 5, dpi = 300)
+```
+
+To share this notebook, an `.nb.html` file is created automatically each time you save. You can open it in any web browser.
